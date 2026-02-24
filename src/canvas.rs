@@ -122,7 +122,7 @@ impl Canvas {
                     // Let's use space ' ' for empty cells to minimize artifacting.
                 }
             }
-            output.push('\n');
+            output.push_str("\r\n");
         }
         output
     }

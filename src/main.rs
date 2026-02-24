@@ -218,8 +218,8 @@ fn main() -> Result<()> {
 
             // Render
             execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
-            execute!(stdout, Print(format!("{}\n", info_str)))?;
-            execute!(stdout, Print(format!("{}\n", help_str)))?;
+            execute!(stdout, Print(format!("{}\r\n", info_str)))?;
+            execute!(stdout, Print(format!("{}\r\n", help_str)))?;
             execute!(stdout, MoveTo(0, 2))?; // Canvas starts below info
             execute!(stdout, Print(canvas.frame()))?;
         }
