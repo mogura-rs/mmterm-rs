@@ -1,8 +1,7 @@
-use std::fs::File;
-use std::io::{self, BufRead};
 use std::path::Path;
 use glam::Vec3;
 use anyhow::Result;
+use pdbtbx;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -34,45 +33,58 @@ impl Model {
 }
 
 pub fn read_pdb<P: AsRef<Path>>(path: P) -> Result<Vec<Model>> {
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
+    let path_str = path.as_ref().to_str().ok_or_else(|| anyhow::anyhow!("Invalid path string"))?;
+    // pdbtbx::open returns Result<(PDB, Vec<PDBError>), Vec<PDBError>>
+    let (pdb, _errors) = pdbtbx::open(path_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse PDB file: {:?}", e))?;
 
     let protein_bb = ["N", "CA", "C"];
     let nucleic_bb = ["P", "O5'", "C5'", "C4'", "C3'", "O3'"];
 
-    // We only care about models if explicit MODEL record exists, otherwise it's one model.
-    // For simplicity, we'll just read all atoms into one list per MODEL block.
-    // If no MODEL tags, it's one model.
-
     let mut models = Vec::new();
-    let mut current_atoms = Vec::new();
 
-    for line in reader.lines() {
-        let line = line?;
-        if line.starts_with("MODEL") {
-            if !current_atoms.is_empty() {
-                models.push(process_model(current_atoms));
-                current_atoms = Vec::new();
-            }
-        } else if line.starts_with("ENDMDL") {
-            if !current_atoms.is_empty() {
-                models.push(process_model(current_atoms));
-                current_atoms = Vec::new();
-            }
-        } else if line.starts_with("ATOM") || line.starts_with("HETATM") {
-            if let Some(atom) = parse_atom_line(&line) {
-                // Filter
-                let name = atom.name.trim();
-                if protein_bb.contains(&name) || nucleic_bb.contains(&name) {
-                    current_atoms.push(atom);
+    for pdb_model in pdb.models() {
+        let mut atoms = Vec::new();
+
+        for chain in pdb_model.chains() {
+            // chain.id() returns a String in recent pdbtbx versions? or char?
+            // Let's assume String based on common Rust PDB crates, but check.
+            let cid_str = chain.id();
+            let chain_id = cid_str.chars().next().unwrap_or(' ');
+
+            for residue in chain.residues() {
+                // residue.name() returns Option<&str> or &str?
+                // residue.serial_number() returns isize usually.
+                let res_name = residue.name().unwrap_or("UNK").to_string();
+                let res_seq = residue.serial_number() as i32;
+
+                for atom in residue.atoms() {
+                    let name = atom.name();
+                    let name_str = name.trim();
+
+                    if protein_bb.contains(&name_str) || nucleic_bb.contains(&name_str) {
+                        let (x, y, z) = atom.pos();
+                        let x = x as f32;
+                        let y = y as f32;
+                        let z = z as f32;
+
+                        atoms.push(Atom {
+                            serial: atom.serial_number() as i32,
+                            name: name.to_string(),
+                            res_name: res_name.clone(),
+                            chain_id,
+                            res_seq,
+                            pos: Vec3::new(x, y, z),
+                        });
+                    }
                 }
             }
         }
-    }
 
-    // Handle case where no MODEL/ENDMDL tags or last model
-    if !current_atoms.is_empty() {
-        models.push(process_model(current_atoms));
+        // Only add model if it has atoms
+        if !atoms.is_empty() {
+            models.push(process_model(atoms));
+        }
     }
 
     if models.is_empty() {
@@ -80,46 +92,6 @@ pub fn read_pdb<P: AsRef<Path>>(path: P) -> Result<Vec<Model>> {
     }
 
     Ok(models)
-}
-
-fn parse_atom_line(line: &str) -> Option<Atom> {
-    if line.len() < 54 { return None; }
-
-    // Columns (0-indexed):
-    // 6-11: Serial (integer) -> line[6..11]
-    // 12-16: Name (string) -> line[12..16]
-    // 17-20: ResName (string) -> line[17..20]
-    // 21: ChainID (char) -> line[21..22]
-    // 22-26: ResSeq (integer) -> line[22..26]
-    // 30-38: X (float) -> line[30..38]
-    // 38-46: Y (float) -> line[38..46]
-    // 46-54: Z (float) -> line[46..54]
-
-    let serial_str = line.get(6..11)?.trim();
-    let name_str = line.get(12..16)?.trim();
-    let res_name_str = line.get(17..20)?.trim();
-    let chain_id_str = line.get(21..22)?;
-    let res_seq_str = line.get(22..26)?.trim();
-    let x_str = line.get(30..38)?.trim();
-    let y_str = line.get(38..46)?.trim();
-    let z_str = line.get(46..54)?.trim();
-
-    let serial = serial_str.parse().ok()?;
-    let res_seq = res_seq_str.parse().ok()?;
-    let x: f32 = x_str.parse().ok()?;
-    let y: f32 = y_str.parse().ok()?;
-    let z: f32 = z_str.parse().ok()?;
-
-    let chain_id = chain_id_str.chars().next().unwrap_or(' ');
-
-    Some(Atom {
-        serial,
-        name: name_str.to_string(),
-        res_name: res_name_str.to_string(),
-        chain_id,
-        res_seq,
-        pos: Vec3::new(x, y, z),
-    })
 }
 
 fn process_model(mut atoms: Vec<Atom>) -> Model {
@@ -143,41 +115,6 @@ fn process_model(mut atoms: Vec<Atom>) -> Model {
     let mut connections = Vec::new();
     for i in 0..atoms.len() {
         if i == atoms.len() - 1 {
-            // Last atom has no next atom to connect to, usually connections has length N-1 or N
-            // The drawing logic iterates 0..N-1. So connections should be size N-1?
-            // Python: "connections.append(...)" for each atom if it connects to previous?
-            // Python logic:
-            // for atom in model:
-            //   if len(model_coords) > 0:
-            //      connections.append(chain == last_chain and (res == last_res + 1 or res == last_res))
-            //   model_coords.append(atom)
-
-            // So connection[i] corresponds to connection between atom[i] and atom[i+1]?
-            // Python: connections list length is N-1 (it appends when len > 0).
-            // Actually, in python:
-            //   if len(model_coords) > 0: append connection.
-            //   model_coords.append.
-            // So if N atoms, N-1 connections.
-            // connection[0] is between atom[0] and atom[1]?
-            // No, wait.
-            // atom 0: len=0, no append. list becomes [a0].
-            // atom 1: len=1 > 0. append conn (based on a1 and a0). list [a0, a1].
-            // So connection[0] is the link between a1 and a0 (the previous one).
-
-            // Wait, let's look at Python view loop:
-            // for i in range(coords.shape[1] - 1):
-            //    if not info['connections'][i]: continue
-            //    start = coords[i], end = coords[i+1]
-
-            // So connections[i] describes link between i and i+1.
-            // But in Python parse loop:
-            // when processing atom `i` (which is the i-th appended, so index i in array),
-            // we check against `last_chain`, `last_res`.
-            // `connections.append(...)` happens before appending the current atom.
-            // So at index i=1 (2nd atom), we append `connections[0]`.
-            // This checks `current` vs `last`. i.e. atom[1] vs atom[0].
-            // So connections[0] describes link between 0 and 1.
-            // Yes.
             break;
         }
 
