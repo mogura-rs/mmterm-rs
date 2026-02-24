@@ -20,7 +20,7 @@ It uses Braille characters to render 3D protein structures directly in your term
 Ensure you have [Rust and Cargo installed](https://rustup.rs/).
 
 ```bash
-git clone https://github.com/yourusername/mmterm-rs
+git clone https://github.com/mogura-rs/mmterm-rs
 cd mmterm-rs
 cargo install --path .
 ```
