@@ -28,6 +28,14 @@ struct Args {
     /// Initial model to show (1-based)
     #[arg(short = 'm', default_value_t = 1)]
     model: usize,
+
+    /// Chain to show
+    #[arg(short = 'c', long = "chain")]
+    chain: Option<String>,
+
+    /// Format of the input file
+    #[arg(short = 'f', long = "format")]
+    format: Option<String>,
 }
 
 // Constants from Python version
@@ -45,7 +53,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let models = pdb::read_pdb(&args.input).context("Failed to read PDB file")?;
+    let models = pdb::read_pdb(&args.input, args.chain.as_deref(), args.format.as_deref()).context("Failed to read PDB file")?;
 
     // Current state
     let mut curr_model_idx = if args.model > 0 && args.model <= models.len() {

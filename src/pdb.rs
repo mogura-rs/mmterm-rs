@@ -1,7 +1,7 @@
 use std::path::Path;
 use glam::Vec3;
 use anyhow::Result;
-use pdbtbx;
+use pdbtbx::{self, ReadOptions, Format};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -32,11 +32,24 @@ impl Model {
     }
 }
 
-pub fn read_pdb<P: AsRef<Path>>(path: P) -> Result<Vec<Model>> {
+pub fn read_pdb<P: AsRef<Path>>(path: P, chain_filter: Option<&str>, format_str: Option<&str>) -> Result<Vec<Model>> {
     let path_str = path.as_ref().to_str().ok_or_else(|| anyhow::anyhow!("Invalid path string"))?;
-    // pdbtbx::open returns Result<(PDB, Vec<PDBError>), Vec<PDBError>>
-    let (pdb, _errors) = pdbtbx::open(path_str)
-        .map_err(|e| anyhow::anyhow!("Failed to parse PDB file: {:?}", e))?;
+
+    // Determine format and read
+    let (pdb, _errors) = if let Some(fmt) = format_str {
+        let format_enum = match fmt.to_lowercase().as_str() {
+            "pdb" => Format::Pdb,
+            "mmcif" | "cif" => Format::Mmcif,
+            _ => anyhow::bail!("Unsupported format: {}", fmt),
+        };
+        ReadOptions::default()
+            .set_format(format_enum)
+            .read(path_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse file: {:?}", e))?
+    } else {
+        pdbtbx::open(path_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse PDB file: {:?}", e))?
+    };
 
     let protein_bb = ["N", "CA", "C"];
     let nucleic_bb = ["P", "O5'", "C5'", "C4'", "C3'", "O3'"];
@@ -47,9 +60,14 @@ pub fn read_pdb<P: AsRef<Path>>(path: P) -> Result<Vec<Model>> {
         let mut atoms = Vec::new();
 
         for chain in pdb_model.chains() {
-            // chain.id() returns a String in recent pdbtbx versions? or char?
-            // Let's assume String based on common Rust PDB crates, but check.
             let cid_str = chain.id();
+
+            if let Some(c_filter) = chain_filter {
+                if cid_str != c_filter {
+                    continue;
+                }
+            }
+
             let chain_id = cid_str.chars().next().unwrap_or(' ');
 
             for residue in chain.residues() {
