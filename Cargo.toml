@@ -1,0 +1,10 @@
+[package]
+name = "mmterm-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossterm = "0.27"
+clap = { version = "4.5", features = ["derive"] }
+glam = "0.27"
+anyhow = "1.0"
