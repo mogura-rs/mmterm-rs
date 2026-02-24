@@ -1,7 +1,7 @@
 use std::path::Path;
 use glam::Vec3;
 use anyhow::Result;
-use pdbtbx::{self, ReadOptions, Format};
+use pdbtbx::{self, ReadOptions, Format, StrictnessLevel};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -44,10 +44,13 @@ pub fn read_pdb<P: AsRef<Path>>(path: P, chain_filter: Option<&str>, format_str:
         };
         ReadOptions::default()
             .set_format(format_enum)
+            .set_level(StrictnessLevel::Loose)
             .read(path_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse file: {:?}", e))?
     } else {
-        pdbtbx::open(path_str)
+        ReadOptions::default()
+            .set_level(StrictnessLevel::Loose)
+            .read(path_str)
             .map_err(|e| anyhow::anyhow!("Failed to parse PDB file: {:?}", e))?
     };
 
